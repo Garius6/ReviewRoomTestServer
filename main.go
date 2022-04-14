@@ -9,16 +9,17 @@ import (
 	"strings"
 
 	"github.com/gorilla/mux"
+	"github.com/sirupsen/logrus"
 )
 
 type Movie struct {
-	Id       float64 `json:"id"`
-	Name     string  `json:"name"`
-	PosterId string  `json:"poster_id"`
+	Id        float64 `json:"id"`
+	Name      string  `json:"name"`
+	PosterUrl string  `json:"poster_url"`
 }
 
 func (m Movie) ToString() string {
-	return fmt.Sprintf("{%f, %s,%s}", m.Id, m.Name, m.PosterId)
+	return fmt.Sprintf("{%f, %s,%s}", m.Id, m.Name, m.PosterUrl)
 }
 
 var movies []Movie = []Movie{
@@ -77,6 +78,8 @@ func getMovie(w http.ResponseWriter, r *http.Request) {
 
 	movie := movies[id]
 	movieJSON, err := json.Marshal(movie)
+
+	logrus.Debug(movieJSON)
 
 	if err != nil {
 		fmt.Errorf("Marshaling error %s", err.Error())
