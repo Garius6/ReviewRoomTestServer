@@ -32,9 +32,7 @@ var movies []Movie = []Movie{
 	{3, "Movie 3", "static/example-uuid-4.jpg"},
 }
 
-var users map[string]User = map[string]User{
-	"User1": {"User1", "User1Password"},
-}
+var users map[string]User = map[string]User{}
 
 var comments map[Movie][]Comment = make(map[Movie][]Comment)
 
@@ -44,11 +42,9 @@ func main() {
 	getLocalIp()
 
 	r := mux.NewRouter()
-	r.HandleFunc("/user/create", createUser).Methods("POST")
+	r.HandleFunc("/user/loginOrCreate", loginOrCreateUser).Methods("GET")
 
-	r.HandleFunc("/user/login", loginUser).Methods("POST")
-
-	r.HandleFunc("/movie/{id}", getMovie).Methods("GET")
+	r.HandleFunc("/movie/{id}", authorized(getMovie)).Methods("GET")
 
 	r.HandleFunc("/movies", getMovies).Methods("GET")
 
@@ -60,12 +56,13 @@ func main() {
 	http.Handle("/static/", http.StripPrefix("/static", fileServer))
 
 	http.Handle("/", r)
-	http.ListenAndServe(":8000", nil)
+	logrus.Fatal(http.ListenAndServe(":8000", nil))
 }
 
 func authorized(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := validateToken(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")); err != nil {
+			logrus.Info(fmt.Sprintf("Request with %v", r))
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
@@ -78,46 +75,42 @@ func returnError(w http.ResponseWriter, errorCode int) {
 	w.WriteHeader(errorCode)
 }
 
-func loginUser(w http.ResponseWriter, r *http.Request) {
+func loginOrCreateUser(w http.ResponseWriter, r *http.Request) {
 	var user User
-	decoder := json.NewDecoder(r.Body)
-	decoder.Decode(&user)
+	params := r.URL.Query()
+	user.Username = params["username"][0]
+	user.Password = params["password"][0]
 
 	savedUser, ok := users[user.Username]
-	if err := bcrypt.CompareHashAndPassword([]byte(savedUser.Password), []byte(user.Password)); !ok || err != nil {
-		logrus.Warn("User does not exist")
+	if !ok {
+		createUser(user)
+		savedUser = users[user.Username]
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(savedUser.Password), []byte(user.Password)); err != nil {
+		logrus.Warn("Password is not correct")
+		logrus.Info(users)
 		returnError(w, http.StatusNotFound)
 		return
 	}
 
-	token, err := generateToken(user.Username)
+	token, err := generateToken(user)
 	if err != nil {
 		logrus.Warn(err)
 	}
+	logrus.Info(token)
 	fmt.Fprintf(w, token)
 }
 
-func createUser(w http.ResponseWriter, r *http.Request) {
-	var rUser User
-	decoder := json.NewDecoder(r.Body)
-	decoder.Decode(&rUser)
-
-	user, ok := users[rUser.Username]
-	if ok {
-		logrus.Warn(fmt.Sprintf("User %v tried to create profile again", rUser))
-		return
-	}
-
+func createUser(user User) {
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(user.Password), bcrypt.DefaultCost)
 	if err != nil {
 		logrus.Warn("Hashing failed")
 	}
 
 	user.Password = string(hashedPassword)
-	users[rUser.Username] = user
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
+	logrus.Info(fmt.Sprintf("Creating user %v", user))
+	users[user.Username] = user
 }
 
 func getMovie(w http.ResponseWriter, r *http.Request) {

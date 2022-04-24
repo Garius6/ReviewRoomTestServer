@@ -10,21 +10,23 @@ import (
 var KEY = os.Getenv("KEY")
 
 type UserClaims struct {
-	Username string `json:"username"`
+	Id       float64 `json:"id"`
+	Username string  `json:"username"`
 	jwt.StandardClaims
 }
 
-func NewUserClaims(username string) *UserClaims {
+func NewUserClaims(user User) *UserClaims {
 	return &UserClaims{
-		Username:       username,
+		Id:             user.Id,
+		Username:       user.Username,
 		StandardClaims: jwt.StandardClaims{},
 	}
 }
 
-func generateToken(username string) (string, error) {
+func generateToken(user User) (string, error) {
 	signingKey := []byte(KEY)
 
-	claims := NewUserClaims(username)
+	claims := NewUserClaims(user)
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString(signingKey)
 }

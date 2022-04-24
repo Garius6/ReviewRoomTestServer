@@ -21,6 +21,7 @@ type Comment struct {
 }
 
 type User struct {
+	Id       float64
 	Username string
 	Password string
 }
