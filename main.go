@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"io/ioutil"
 	"net/http"
 	"strconv"
 	"strings"
@@ -23,6 +26,9 @@ func init() {
 	}
 
 	logrus.SetReportCaller(true)
+	logrus.SetFormatter(&logrus.TextFormatter{
+		FullTimestamp: true,
+	})
 }
 
 var movies []Movie = []Movie{
@@ -42,13 +48,15 @@ func main() {
 	getLocalIp()
 
 	r := mux.NewRouter()
-	r.HandleFunc("/user/loginOrCreate", loginOrCreateUser).Methods("GET")
+	r.HandleFunc("/auth/token", getTokenPair).Methods("GET")
 
-	r.HandleFunc("/movie/{id}", authorized(getMovie)).Methods("GET")
+	r.HandleFunc("/auth/token/refresh", logged(refreshToken)).Methods("POST")
+
+	r.HandleFunc("/movie/{id}", logged(authorized(getMovie))).Methods("GET")
 
 	r.HandleFunc("/movies", getMovies).Methods("GET")
 
-	r.HandleFunc("/movie/{id}/comment", authorized(createComment)).Methods("POST")
+	r.HandleFunc("/movie/{id}/comment", logged(authorized(createComment))).Methods("POST")
 
 	r.HandleFunc("/movie/{id}/comments", getComments).Methods("GET")
 
@@ -59,11 +67,26 @@ func main() {
 	logrus.Fatal(http.ListenAndServe(":8000", nil))
 }
 
+func logged(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		logrus.Info(r.URL)
+		buf, err := io.ReadAll(r.Body)
+		if err != nil {
+			logrus.Warn("Error reading request body: ", err.Error())
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+		logrus.Info(string(buf))
+		reader := ioutil.NopCloser(bytes.NewBuffer(buf))
+		r.Body = reader
+		next(w, r)
+	}
+}
+
 func authorized(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if err := validateToken(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")); err != nil {
-			logrus.Info(fmt.Sprintf("Request with %v", r))
-			w.WriteHeader(http.StatusUnauthorized)
+		if err := ValidateUserToken(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")); err != nil {
+			logrus.Warn(err)
+			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
 		}
 
@@ -71,35 +94,82 @@ func authorized(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func returnError(w http.ResponseWriter, errorCode int) {
-	w.WriteHeader(errorCode)
-}
-
-func loginOrCreateUser(w http.ResponseWriter, r *http.Request) {
-	var user User
-	params := r.URL.Query()
-	user.Username = params["username"][0]
-	user.Password = params["password"][0]
-
-	savedUser, ok := users[user.Username]
-	if !ok {
-		createUser(user)
-		savedUser = users[user.Username]
-	}
-
-	if err := bcrypt.CompareHashAndPassword([]byte(savedUser.Password), []byte(user.Password)); err != nil {
-		logrus.Warn("Password is not correct")
-		logrus.Info(users)
-		returnError(w, http.StatusNotFound)
+func refreshToken(w http.ResponseWriter, r *http.Request) {
+	logrus.Info("Refresh token")
+	var refreshToken string
+	defer r.Body.Close()
+	refreshTokenJSON, err := io.ReadAll(r.Body)
+	if err != nil {
+		logrus.Warn(err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	token, err := generateToken(user)
+	err = json.Unmarshal(refreshTokenJSON, &refreshToken)
 	if err != nil {
 		logrus.Warn(err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
-	logrus.Info(token)
-	fmt.Fprintf(w, token)
+
+	logrus.Info("validating token ", refreshToken)
+	rc, err := ValidateRefreshToken(refreshToken)
+	if err != nil {
+		logrus.Warn(err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	logrus.Info("Creating new token for ", string(refreshToken))
+	newToken, err := GenerateUserToken(users[rc.Username])
+	if err != nil {
+		logrus.Warn(err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	tokenPair := TokenPair{AccessToken: newToken, RefreshToken: refreshToken}
+	tokenPairJSON, err := json.Marshal(tokenPair)
+	if err != nil {
+		logrus.Warn(err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if _, err := w.Write(tokenPairJSON); err != nil {
+		logrus.Fatal(err)
+	}
+}
+
+func getTokenPair(w http.ResponseWriter, r *http.Request) {
+	var rUser User
+	params := r.URL.Query()
+	rUser.Username = params["username"][0]
+	rUser.Password = params["password"][0]
+
+	_, ok := users[rUser.Username]
+	if !ok {
+		createUser(rUser)
+	}
+	user := users[rUser.Username]
+
+	logrus.Info("User = ", user)
+	tokens, err := GenerateTokenPair(user)
+	if err != nil {
+		logrus.Warn(err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	tokensJSON, err := json.Marshal(tokens)
+	if err != nil {
+		logrus.Warn(err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	logrus.Info(fmt.Sprintf("%+v", string(tokensJSON)))
+	w.Header().Set("Content-Type", "application/json")
+	if _, err := w.Write(tokensJSON); err != nil {
+		logrus.Fatal(err)
+	}
+
 }
 
 func createUser(user User) {
@@ -119,10 +189,12 @@ func getMovie(w http.ResponseWriter, r *http.Request) {
 	idVar := vars["id"]
 	id, err := strconv.ParseFloat(idVar, 64)
 	if err != nil {
-		logrus.Warn("Atoi error %s", err.Error())
+		logrus.Warn("Atoi error ", err.Error())
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
+
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
 
 	movie := movies[int(id)]
 	movieJSON, err := json.Marshal(movie)
@@ -130,9 +202,11 @@ func getMovie(w http.ResponseWriter, r *http.Request) {
 	logrus.Debug(movieJSON)
 
 	if err != nil {
-		logrus.Warn("Marshaling error %s", err.Error())
+		logrus.Warn("Marshaling error ", err.Error())
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
-	fmt.Fprintf(w, string(movieJSON))
+	w.Write(movieJSON)
 }
 
 func getMovies(w http.ResponseWriter, r *http.Request) {

@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"net/http"
 )
 
 type Movie struct {
@@ -25,5 +24,3 @@ type User struct {
 	Username string
 	Password string
 }
-
-type Middleware func(http.HandlerFunc) http.HandlerFunc

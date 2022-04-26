@@ -1,13 +1,21 @@
 package main
 
 import (
-	"fmt"
+	"errors"
 	"os"
+	"time"
 
 	"github.com/golang-jwt/jwt"
 )
 
-var KEY = os.Getenv("KEY")
+const TOKEN_TIME = time.Second * 15
+
+var KEY = []byte(os.Getenv("KEY"))
+
+type TokenPair struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+}
 
 type UserClaims struct {
 	Id       float64 `json:"id"`
@@ -15,29 +23,47 @@ type UserClaims struct {
 	jwt.StandardClaims
 }
 
-func NewUserClaims(user User) *UserClaims {
-	return &UserClaims{
-		Id:             user.Id,
-		Username:       user.Username,
-		StandardClaims: jwt.StandardClaims{},
+type RefreshClaims struct {
+	Id       float64 `json:"id"`
+	Username string  `json:"username"`
+	jwt.StandardClaims
+}
+
+func NewRefreshClaims(user User) *RefreshClaims {
+	return &RefreshClaims{
+		Id:       user.Id,
+		Username: user.Username,
+		StandardClaims: jwt.StandardClaims{
+			ExpiresAt: time.Now().Add(time.Hour * 24).Unix(),
+		},
 	}
 }
 
-func generateToken(user User) (string, error) {
-	signingKey := []byte(KEY)
+func NewUserClaims(user User) *UserClaims {
+	return &UserClaims{
+		Id:       user.Id,
+		Username: user.Username,
+		StandardClaims: jwt.StandardClaims{
+			ExpiresAt: time.Now().Add(TOKEN_TIME).Unix(),
+		},
+	}
+}
+
+func GenerateUserToken(user User) (string, error) {
+	mySigningKey := KEY
 
 	claims := NewUserClaims(user)
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(signingKey)
+	tokenString, err := token.SignedString(mySigningKey)
+	if err != nil {
+		return "", err
+	}
+	return tokenString, nil
 }
 
-func validateToken(tokenString string) error {
-	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("Unexpected signing method: %v", token.Header["alg"])
-		}
-
-		return []byte(KEY), nil
+func ValidateUserToken(tokenString string) error {
+	token, err := jwt.ParseWithClaims(tokenString, &UserClaims{}, func(token *jwt.Token) (interface{}, error) {
+		return KEY, nil
 	})
 
 	if err != nil {
@@ -47,6 +73,50 @@ func validateToken(tokenString string) error {
 	if _, ok := token.Claims.(*UserClaims); ok && token.Valid {
 		return nil
 	} else {
-		return err
+		return errors.New("invalid claims")
 	}
+}
+
+func GenerateRefreshToken(user User) (string, error) {
+	mySigningKey := KEY
+
+	claims := NewRefreshClaims(user)
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, err := token.SignedString(mySigningKey)
+	if err != nil {
+		return "", err
+	}
+	return tokenString, nil
+}
+
+func ValidateRefreshToken(tokenString string) (*RefreshClaims, error) {
+	token, err := jwt.ParseWithClaims(tokenString, &RefreshClaims{}, func(token *jwt.Token) (interface{}, error) {
+		return KEY, nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	if rc, ok := token.Claims.(*RefreshClaims); ok && token.Valid {
+		return rc, nil
+	} else {
+		return nil, errors.New("invalid claims")
+	}
+}
+
+func GenerateTokenPair(user User) (*TokenPair, error) {
+	var tokenPair TokenPair
+	accessToken, err := GenerateUserToken(user)
+	if err != nil {
+		return nil, err
+	}
+	tokenPair.AccessToken = accessToken
+
+	refreshToken, err := GenerateRefreshToken(user)
+	if err != nil {
+		return nil, err
+	}
+	tokenPair.RefreshToken = refreshToken
+	return &tokenPair, nil
 }
