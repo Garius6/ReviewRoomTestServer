@@ -1,0 +1,258 @@
+openapi: 3.0.0
+info:
+  title: ReviewRoom
+  description: "Server for Reviewroom mobile app"
+  version: 0.2.0
+    
+tags:
+  - name: login
+    description: "Все связанное с авторизацией и пользоваетелем"
+    
+  - name: movie
+    description: "Все связанное с фильмами"
+
+  - name: collection
+    description: "Работа с коллекциями фильмов"
+  
+paths:
+  /movies:
+    get:
+      tags:
+        - movie
+      summary: "Возвращает 'топ' фильмов"
+      responses:
+        '200':
+          description: "Содержит список с фильмами"
+          content:
+            application/json:
+              schema:
+                type: array
+                items: 
+                  $ref: '#/components/schemas/Movie'
+        '401':
+          description: "Пользователь не авторизован"
+      security:
+      - bearerAuth: [] 
+  
+  /movie/{id}:
+    get:
+      tags:
+        - movie
+      summary: "Возвращает информацию о фильме"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: number
+            format: float64
+      responses:
+        '200':
+          description: "Содержит информацию о фильме"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Movie'
+        '401':
+          description: "Пользователь не авторизован"
+      security:
+      - bearerAuth: [] 
+
+  /movie/{id}/comment:
+    post:
+      tags:
+        - movie
+      summary: "Создает комментарий (отзыв) к фильму"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: 
+            type: number
+            format: float64
+      requestBody:
+        $ref: '#/components/requestBodies/CommentBody'
+      responses:
+        '200':
+          description: "Подтверждение создания отзыва"
+        '401':
+          description: "Пользователь не авторизован"
+      security:
+      - bearerAuth: [] 
+    
+  /movie/{id}/comments:
+    get:
+      tags:
+        - movie
+      summary: "Возвращает список отзывов к фильму"
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: number
+            format: float64
+          
+      responses:
+        '200':
+          description: "Содержит список отзывов"
+          content:
+            application/json:
+              schema:
+                type: array
+                items: 
+                  $ref: '#/components/schemas/Comment'
+        '401':
+          description: "Пользователь не авторизован"
+      security:
+      - bearerAuth: [] 
+  
+  
+  /auth/token:
+    get:
+      tags:
+        - login
+      parameters:
+        - name: username
+          in: query
+          schema:
+            type: string
+          
+        - name: password
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: "Возвращает объект с токеном доступа и токеном обновления"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenPair'
+  
+  /auth/token/refresh:
+    post:
+      tags:
+        - login
+      requestBody:
+        $ref: '#/components/requestBodies/RefreshToken'
+      responses:
+        '200':
+          description: "Возвращает TokenPair с обновленным токеном доступа"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenPair'
+
+  /collections:
+    get:
+      tags:
+        - collection
+      responses:
+        '200':
+          description: "Возвращает список коллекций пользователя"
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Collection'
+  
+  /collection/{id}:
+    get:
+      tags:
+        - collection
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: number
+            format: float64
+      responses:
+        '200':
+          description: "Возвращает информацию о коллекции"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Collection'
+  
+  /collection:
+    post:
+      tags:
+        - collection
+      requestBody:
+          $ref: '#/components/requestBodies/CollectionBody'
+      responses:
+        '200':
+          description: "Подтверждение успешного создания коллекции"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  
+  schemas:
+    Movie:
+      type: object
+      properties:
+        id:
+          type: number
+          format: float64
+        name:
+          type: string
+        posterUrl:
+          type: string
+    
+    Comment:
+      type: object
+      properties:
+        id:
+          type: number
+          format: float64
+        text:
+          type: string
+    
+    TokenPair:
+      type: object
+      properties:
+        accessToken:
+          type: string
+          format: jwt
+        refreshToken:
+          type: string
+          format: jwt
+    
+    Collection:
+      type: object
+      properties:
+        id:
+          type: number
+          format: float64
+        movies:
+          type: array
+          items: 
+            $ref: '#/components/schemas/Movie'
+          
+  requestBodies:
+    CollectionBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Collection'
+            
+    RefreshToken:
+      required: true
+      content: 
+        application/json:
+          schema:
+            type: string
+    CommentBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Comment'
