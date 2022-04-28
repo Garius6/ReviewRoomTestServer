@@ -148,6 +148,8 @@ paths:
     get:
       tags:
         - collection
+      security:
+      - bearerAuth: [] 
       responses:
         '200':
           description: "Возвращает список коллекций пользователя"
@@ -162,6 +164,8 @@ paths:
     get:
       tags:
         - collection
+      security:
+      - bearerAuth: [] 
       parameters:
         - name: id
           in: path
@@ -181,6 +185,8 @@ paths:
     post:
       tags:
         - collection
+      security:
+      - bearerAuth: [] 
       requestBody:
           $ref: '#/components/requestBodies/CollectionBody'
       responses:
