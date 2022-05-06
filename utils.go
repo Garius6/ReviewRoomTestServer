@@ -1,9 +1,13 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"strings"
+
+	"github.com/golang-jwt/jwt"
 )
 
 func getLocalIp() {
@@ -25,5 +29,25 @@ func getLocalIp() {
 				fmt.Println(ip)
 			}
 		}
+	}
+}
+
+func getUserIdFromToken(r *http.Request) (float64, error) {
+	accessTokenString := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if accessTokenString == "" {
+		return 0, errors.New("access token string cannot be empty")
+	}
+
+	token, err := jwt.ParseWithClaims(accessTokenString, &UserClaims{}, func(token *jwt.Token) (interface{}, error) {
+		return KEY, nil
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	if uc, ok := token.Claims.(*UserClaims); ok && token.Valid {
+		return uc.Id, nil
+	} else {
+		return 0, errors.New("token is invalid")
 	}
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -31,11 +32,35 @@ func init() {
 	})
 }
 
+const (
+	FILTER_TOP  = "top"
+	FILTER_USER = "user"
+)
+
 var movies []Movie = []Movie{
 	{0, "Movie 0", "static/example-uuid-1.jpg"},
 	{1, "Movie 1", "static/example-uuid-2.jpg"},
 	{2, "Movie 2", "static/example-uuid-3.jpg"},
 	{3, "Movie 3", "static/example-uuid-4.jpg"},
+	{4, "Movie 0", "static/example-uuid-1.jpg"},
+	{5, "Movie 1", "static/example-uuid-2.jpg"},
+	{6, "Movie 2", "static/example-uuid-3.jpg"},
+	{7, "Movie 3", "static/example-uuid-4.jpg"},
+	{8, "Movie 0", "static/example-uuid-1.jpg"},
+	{9, "Movie 1", "static/example-uuid-2.jpg"},
+	{10, "Movie 2", "static/example-uuid-3.jpg"},
+	{11, "Movie 3", "static/example-uuid-4.jpg"},
+	{12, "Movie 3", "static/example-uuid-4.jpg"},
+	{13, "Movie 3", "static/example-uuid-4.jpg"},
+	{14, "Movie 3", "static/example-uuid-4.jpg"},
+	{15, "Movie 3", "static/example-uuid-4.jpg"},
+	{16, "Movie 3", "static/example-uuid-4.jpg"},
+	{17, "Movie 3", "static/example-uuid-4.jpg"},
+}
+
+var collections []Collection = []Collection{
+	{0, "User 0 collection", 0, movies[:2]},
+	{1, "User 1 collection", 1, movies[2:]},
 }
 
 var users map[string]User = map[string]User{}
@@ -54,11 +79,17 @@ func main() {
 
 	r.HandleFunc("/movie/{id}", logged(authorized(getMovie))).Methods("GET")
 
-	r.HandleFunc("/movies", getMovies).Methods("GET")
+	r.HandleFunc("/movies", logged(authorized(getMovies))).Methods("GET")
 
 	r.HandleFunc("/movie/{id}/comment", logged(authorized(createComment))).Methods("POST")
 
-	r.HandleFunc("/movie/{id}/comments", getComments).Methods("GET")
+	r.HandleFunc("/movie/{id}/comments", logged(authorized(getComments))).Methods("GET")
+
+	r.HandleFunc("/collections", logged(authorized(getCollections))).Methods("GET")
+
+	r.HandleFunc("/collection/{id}", getCollection).Methods("GET")
+
+	r.HandleFunc("/collection", createCollection).Methods("POST")
 
 	fileServer := http.FileServer(http.Dir("./static"))
 	http.Handle("/static/", http.StripPrefix("/static", fileServer))
@@ -74,6 +105,7 @@ func logged(next http.HandlerFunc) http.HandlerFunc {
 		if err != nil {
 			logrus.Warn("Error reading request body: ", err.Error())
 			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
 		}
 		logrus.Info(string(buf))
 		reader := ioutil.NopCloser(bytes.NewBuffer(buf))
@@ -85,10 +117,13 @@ func logged(next http.HandlerFunc) http.HandlerFunc {
 func authorized(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := ValidateUserToken(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")); err != nil {
+			token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+			logrus.Info(len(token))
 			logrus.Warn(err)
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
 		}
+		logrus.Info("Authorized")
 
 		next(w, r)
 	}
@@ -141,8 +176,8 @@ func refreshToken(w http.ResponseWriter, r *http.Request) {
 func getTokenPair(w http.ResponseWriter, r *http.Request) {
 	var rUser User
 	params := r.URL.Query()
-	rUser.Username = params["username"][0]
-	rUser.Password = params["password"][0]
+	rUser.Username = params.Get("username")
+	rUser.Password = params.Get("password")
 
 	_, ok := users[rUser.Username]
 	if !ok {
@@ -265,4 +300,88 @@ func getComments(w http.ResponseWriter, r *http.Request) {
 		logrus.Warn(err.Error())
 	}
 	fmt.Fprintf(w, string(commentsJSON))
+}
+
+func getCollections(w http.ResponseWriter, r *http.Request) {
+	logrus.Info("getCollections")
+	cols := collections[:]
+	filter := string(r.URL.Query().Get("filter"))
+	logrus.Info(filter)
+	if filter == FILTER_USER {
+		userId, err := getUserIdFromToken(r)
+		if err != nil {
+			logrus.Warn(err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		cols = getUserCollections(userId)
+	}
+	collectionsJSON, err := json.Marshal(cols)
+	if err != nil {
+		logrus.Warn(err)
+		http.Error(w, "Cannot conver collections", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(collectionsJSON)
+}
+
+func getCollection(w http.ResponseWriter, r *http.Request) {
+	idVar := mux.Vars(r)["id"]
+	id, err := strconv.ParseFloat(idVar, 64)
+	if err != nil {
+		logrus.Warn(err)
+		http.Error(w, "Invalid path parameter", http.StatusBadRequest)
+		return
+	}
+
+	col, err := findInCollections(id)
+	if err != nil {
+		logrus.Warn(err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	colJSON, err := json.Marshal(col)
+	if err != nil {
+		logrus.Warn(err)
+		http.Error(w, "Cannot conver collection", http.StatusBadRequest)
+		return
+	}
+	w.Write(colJSON)
+}
+
+func findInCollections(id float64) (Collection, error) {
+	for _, c := range collections {
+		if c.Id == id {
+			return c, nil
+		}
+	}
+
+	return Collection{}, errors.New("Collection doesn't exist")
+}
+
+func createCollection(w http.ResponseWriter, r *http.Request) {
+	var newCollection Collection
+	err := json.NewDecoder(r.Body).Decode(&newCollection)
+	if err != nil {
+		logrus.Warn(err)
+		http.Error(w, "Cannot convert collection", http.StatusBadRequest)
+		return
+	}
+
+	collections = append(collections, newCollection)
+	w.WriteHeader(http.StatusOK)
+}
+
+func getUserCollections(userId float64) []Collection {
+	cols := make([]Collection, 0)
+	logrus.Info("Top collections = ", collections, "\nUser collections = ", cols)
+	for _, c := range collections {
+		if c.AuthorId == userId {
+			cols = append(cols, c)
+		}
+	}
+	logrus.Info("Top collections = ", collections, "\nUser collections = ", cols)
+	return cols
 }

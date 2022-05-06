@@ -8,7 +8,7 @@ import (
 	"github.com/golang-jwt/jwt"
 )
 
-const TOKEN_TIME = time.Second * 15
+const TOKEN_TIME = time.Minute * 15
 
 var KEY = []byte(os.Getenv("KEY"))
 

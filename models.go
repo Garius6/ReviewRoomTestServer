@@ -4,6 +4,13 @@ import (
 	"fmt"
 )
 
+type Collection struct {
+	Id       float64 `json:"id"`
+	Name     string  `json:"name"`
+	AuthorId float64 `json:"author_id"`
+	Movies   []Movie `json:"movies"`
+}
+
 type Movie struct {
 	Id        float64 `json:"id"`
 	Name      string  `json:"name"`
